@@ -385,9 +385,8 @@ bool ProgramBinaryV1::Parse(Logger const *)
 
             m_KernelInfo.push_back(std::move(info));
         }
-        return true;
     }
-    return false;
+    return true;
 }
 
 size_t ProgramBinaryV1::GetBinarySize() const
