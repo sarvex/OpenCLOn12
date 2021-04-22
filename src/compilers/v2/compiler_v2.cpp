@@ -115,9 +115,6 @@ static clc_logger ConvertLogger(Logger const& logger)
     return ret;
 }
 
-#if 0
-#endif
-
 CompilerV2::CompilerV2(XPlatHelpers::unique_module compiler)
     : m_Compiler(std::move(compiler))
 {
