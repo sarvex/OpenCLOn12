@@ -154,7 +154,7 @@ clCreateProgramWithBinary(cl_context                     context_,
         for (cl_uint i = 0; i < num_devices; ++i)
         {
             auto header = reinterpret_cast<ProgramBinaryHeader const*>(binaries[i]);
-            unique_spirv BinaryHolder = g_Platform->GetCompiler()->Load(header->GetBinary(), header->BinarySize);
+            std::shared_ptr<ProgramBinary> BinaryHolder = g_Platform->GetCompiler()->Load(header->GetBinary(), header->BinarySize);
             NewProgram->StoreBinary(static_cast<Device*>(device_list[i]), std::move(BinaryHolder), header->BinaryType);
 
             if (binary_status) *binary_status = CL_SUCCESS;
@@ -198,11 +198,13 @@ clCreateProgramWithIL(cl_context    context_,
 
     try
     {
-        const std::byte *ilAsBytes = static_cast<const std::byte *>(il);
-        std::vector<std::byte> ILCopy(ilAsBytes, ilAsBytes + length);
+        auto pCompiler = g_Platform->GetCompiler();
+        std::shared_ptr<ProgramBinary> parsedProgram = pCompiler->Load(il, length);
+        if (!parsedProgram || !parsedProgram->Parse(nullptr))
+            return ReportError("Failed to parse SPIR-V", CL_INVALID_VALUE);
 
         if (errcode_ret) *errcode_ret = CL_SUCCESS;
-        return new Program(context, std::move(ILCopy));
+        return new Program(context, std::move(parsedProgram));
     }
     catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
     catch (std::exception & e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
@@ -392,8 +394,12 @@ clGetProgramInfo(cl_program         program_,
                                     program.m_AssociatedDevices.size() * sizeof(program.m_AssociatedDevices[0]),
                                     param_value_size, param_value, param_value_size_ret);
     case CL_PROGRAM_SOURCE: return RetValue(program.m_Source.c_str());
-    case CL_PROGRAM_IL: return CopyOutParameterImpl(program.m_IL.data(), program.m_IL.size(),
-                                                    param_value_size, param_value, param_value_size_ret);
+    case CL_PROGRAM_IL:
+        if (program.m_ParsedIL)
+            return CopyOutParameterImpl(program.m_ParsedIL->GetBinary(), program.m_ParsedIL->GetBinarySize(),
+                                        param_value_size, param_value, param_value_size_ret);
+        else
+            return CopyOutParameter(nullptr, param_value_size, param_value, param_value_size_ret);
     case CL_PROGRAM_BINARY_SIZES:
     {
         size_t OutSize = sizeof(size_t) * program.m_AssociatedDevices.size();
@@ -556,9 +562,9 @@ Program::Program(Context& Parent, std::string Source)
 {
 }
 
-Program::Program(Context& Parent, std::vector<std::byte> IL)
+Program::Program(Context& Parent, std::shared_ptr<ProgramBinary> ParsedIL)
     : CLChildBase(Parent)
-    , m_IL(std::move(IL))
+    , m_ParsedIL(std::move(ParsedIL))
     , m_AssociatedDevices(Parent.GetDevices())
 {
 }
@@ -594,7 +600,7 @@ cl_int Program::Build(std::vector<Device::ref_ptr_int> Devices, const char* opti
             auto &BuildData = m_BuildData[device.Get()];
             if (!BuildData)
             {
-                if (m_Source.empty() && m_IL.empty())
+                if (m_Source.empty() && !m_ParsedIL)
                 {
                     return ReportError("Build requested for binary program, for device with no binary.", CL_INVALID_BINARY);
                 }
@@ -616,7 +622,7 @@ cl_int Program::Build(std::vector<Device::ref_ptr_int> Devices, const char* opti
             }
         }
 
-        if (!m_Source.empty() || !m_IL.empty())
+        if (!m_Source.empty() || m_ParsedIL)
         {
             // Update build status to indicate build is starting so nobody else can start a build
             auto BuildData = std::make_shared<PerDeviceData>();
@@ -662,7 +668,7 @@ cl_int Program::Build(std::vector<Device::ref_ptr_int> Devices, const char* opti
 cl_int Program::Compile(std::vector<Device::ref_ptr_int> Devices, const char* options, cl_uint num_input_headers, const cl_program* input_headers, const char** header_include_names, Callback pfn_notify, void* user_data)
 {
     auto ReportError = GetContext().GetErrorReporter();
-    if (m_Source.empty() && m_IL.empty())
+    if (m_Source.empty() && !m_ParsedIL)
     {
         return ReportError("Program does not contain source or IL.", CL_INVALID_OPERATION);
     }
@@ -677,7 +683,7 @@ cl_int Program::Compile(std::vector<Device::ref_ptr_int> Devices, const char* op
     }
 
     // "If program was created using clCreateProgramWithIL, then num_input_headers, input_headers, and header_include_names are ignored."
-    if (m_IL.empty())
+    if (!m_ParsedIL)
     {
         for (cl_uint i = 0; i < num_input_headers; ++i)
         {
@@ -864,7 +870,7 @@ cl_int Program::Link(const char* options, cl_uint num_input_programs, const cl_p
     }
 }
 
-void Program::StoreBinary(Device *Device, unique_spirv OwnedBinary, cl_program_binary_type Type)
+void Program::StoreBinary(Device *Device, std::shared_ptr<ProgramBinary> OwnedBinary, cl_program_binary_type Type)
 {
     std::lock_guard Lock(m_Lock);
     auto& BuildData = m_BuildData[Device];
@@ -1049,13 +1055,13 @@ cl_int Program::BuildImpl(BuildArgs const& Args)
 {
     cl_int ret = CL_SUCCESS;
     auto pCompiler = g_Platform->GetCompiler();
-    if (!m_Source.empty() || !m_IL.empty())
+    if (!m_Source.empty() || m_ParsedIL)
     {
         auto& BuildData = Args.Common.BuildData;
         pCompiler->Initialize(BuildData->m_Device->GetShaderCache());
 
         Logger loggers(m_Lock, BuildData->m_BuildLog);
-        unique_spirv compiledObject;
+        std::shared_ptr<ProgramBinary> compiledObject;
 
         if (!m_Source.empty())
         {
@@ -1071,7 +1077,7 @@ cl_int Program::BuildImpl(BuildArgs const& Args)
         }
         else
         {
-            compiledObject = pCompiler->Load(m_IL.data(), m_IL.size());
+            compiledObject = m_ParsedIL;
         }
 
         if (compiledObject)
@@ -1140,7 +1146,7 @@ cl_int Program::CompileImpl(CompileArgs const& Args)
     pCompiler->Initialize(BuildData->m_Device->GetShaderCache());
     Logger loggers(m_Lock, BuildData->m_BuildLog);
 
-    unique_spirv object;
+    std::shared_ptr<ProgramBinary> object;
 
     if (!m_Source.empty())
     {
@@ -1161,8 +1167,7 @@ cl_int Program::CompileImpl(CompileArgs const& Args)
     }
     else
     {
-        assert(!m_IL.empty());
-        object = pCompiler->Load(m_IL.data(), m_IL.size());
+        object = m_ParsedIL;
     }
 
     {
@@ -1215,7 +1220,7 @@ cl_int Program::LinkImpl(LinkArgs const& Args)
             if (BuildData->m_BuildStatus == CL_BUILD_IN_PROGRESS)
             {
                 Logger loggers(m_Lock, BuildData->m_BuildLog);
-                unique_spirv linkedObject = pCompiler->Link(link_args, loggers);
+                std::shared_ptr<ProgramBinary> linkedObject = pCompiler->Link(link_args, loggers);
 
                 if (linkedObject)
                 {
