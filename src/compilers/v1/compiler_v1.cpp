@@ -40,6 +40,7 @@ public:
     virtual std::unique_ptr<ProgramBinary> Compile(CompileArgs const& args, Logger const& logger) const final;
     virtual std::unique_ptr<ProgramBinary> Link(LinkerArgs const& args, Logger const& logger) const final;
     virtual std::unique_ptr<ProgramBinary> Load(const void *data, size_t size) const final;
+    virtual std::unique_ptr<ProgramBinary> Specialize(ProgramBinary const& obj, ProgramBinary::SpecConstantValues const& values, Logger const& logger) const final;
     virtual std::unique_ptr<CompiledDxil> GetKernel(const char *name, ProgramBinary const& obj, CompiledDxil::Configuration const *, Logger const *logger) const final;
     virtual std::byte * CopyWorkProperties(std::byte *WorkPropertiesBuffer, WorkProperties const& props) const final;
     virtual size_t GetWorkPropertiesChunkSize() const final;
@@ -242,6 +243,12 @@ std::unique_ptr<ProgramBinary> CompilerV1::Load(const void *data, size_t size) c
     memcpy(obj->spvbin.data, data, size);
 
     return std::make_unique<ProgramBinaryV1>(std::move(obj));
+}
+
+std::unique_ptr<ProgramBinary> CompilerV1::Specialize(ProgramBinary const&, ProgramBinary::SpecConstantValues const&, Logger const& logger) const
+{
+    logger.Log("Compiler does not support specialization constants");
+    return nullptr;
 }
 
 std::unique_ptr<CompiledDxil> CompilerV1::GetKernel(const char *name, ProgramBinary const& obj, CompiledDxil::Configuration const *conf, Logger const *logger) const
