@@ -28,6 +28,7 @@ public:
     cl_int Link(const char* options, cl_uint num_input_programs, const cl_program* input_programs, Callback pfn_notify, void* user_data);
 
     void StoreBinary(Device* Device, std::shared_ptr<ProgramBinary> OwnedBinary, cl_program_binary_type Type);
+    void SetSpecConstant(cl_uint ID, size_t size, const void *value);
 
     const ProgramBinary* GetSpirV(Device* device) const;
 
@@ -135,6 +136,7 @@ private:
     friend struct Loggers;
 
     const std::vector<Device::ref_ptr_int> m_AssociatedDevices;
+    ProgramBinary::SpecConstantValues m_SpecConstants;
 
     struct CommonOptions
     {
