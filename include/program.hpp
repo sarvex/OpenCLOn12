@@ -134,7 +134,7 @@ private:
 
     friend struct Loggers;
 
-    std::vector<Device::ref_ptr_int> m_AssociatedDevices;
+    const std::vector<Device::ref_ptr_int> m_AssociatedDevices;
 
     struct CommonOptions
     {
