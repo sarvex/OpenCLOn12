@@ -316,21 +316,45 @@ TEST(OpenCLOn12, SPIRV)
 
     std::vector<char> IL(spirv, std::end(spirv));
     cl::Program prog(context, IL, true /*build*/);
-    cl::Kernel kernel(prog, "main_test");
 
-    uint32_t data[] = { 0x00000001, 0x10000001, 0x00020002, 0x04010203 };
-    cl::Buffer inout(context, data, std::end(data), false, true);
+    {
+        cl::Kernel kernel(prog, "main_test");
 
-    kernel.setArg(0, inout);
-    cl::NDRange offset(0);
-    cl::NDRange global(_countof(data));
-    queue.enqueueNDRangeKernel(kernel, offset, global);
-    queue.enqueueMapBuffer(inout, CL_TRUE, CL_MAP_READ, 0, sizeof(data));
+        uint32_t data[] = { 0x00000001, 0x10000001, 0x00020002, 0x04010203 };
+        cl::Buffer inout(context, data, std::end(data), false, true);
 
-    EXPECT_EQ(data[0], 0x00000001u);
-    EXPECT_EQ(data[1], 0x20000002u);
-    EXPECT_EQ(data[2], 0x00060006u);
-    EXPECT_EQ(data[3], 0x1004080cu);
+        kernel.setArg(0, inout);
+        cl::NDRange offset(0);
+        cl::NDRange global(_countof(data));
+        queue.enqueueNDRangeKernel(kernel, offset, global);
+        queue.enqueueMapBuffer(inout, CL_TRUE, CL_MAP_READ, 0, sizeof(data));
+
+        EXPECT_EQ(data[0], 0x00000001u);
+        EXPECT_EQ(data[1], 0x20000002u);
+        EXPECT_EQ(data[2], 0x00060006u);
+        EXPECT_EQ(data[3], 0x1004080cu);
+    }
+
+    prog.setSpecializationConstant(1, 5);
+    prog.build();
+
+    {
+        cl::Kernel kernel(prog, "main_test");
+
+        uint32_t data[] = { 0x00000001, 0x10000001, 0x00020002, 0x04010203 };
+        cl::Buffer inout(context, data, std::end(data), false, true);
+
+        kernel.setArg(0, inout);
+        cl::NDRange offset(0);
+        cl::NDRange global(_countof(data));
+        queue.enqueueNDRangeKernel(kernel, offset, global);
+        queue.enqueueMapBuffer(inout, CL_TRUE, CL_MAP_READ, 0, sizeof(data));
+
+        EXPECT_EQ(data[0], 0x00000005u);
+        EXPECT_EQ(data[1], 0x60000006u);
+        EXPECT_EQ(data[2], 0x000e000eu);
+        EXPECT_EQ(data[3], 0x20081018u);
+    }
 }
 
 int main(int argc, char** argv)
